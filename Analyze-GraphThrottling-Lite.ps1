@@ -373,7 +373,7 @@ foreach ($appEntry in $appInventory | Select-Object -First 20) {
         }
     }
     catch {
-        # Owner lookup may fail for some apps
+        Write-Verbose "Owner lookup failed for $($appEntry.AppId): $($_.Exception.Message)"
     }
 }
 Write-Host ""
@@ -555,7 +555,7 @@ if ($grantedAppPerms.Count -gt 0) {
             }
         }
         catch {
-            # Some SPs may not be readable
+            Write-Verbose "Could not read service principal ${spId}: $($_.Exception.Message)"
         }
     }
 

@@ -214,18 +214,17 @@ Write-Host ""
 Write-Host "[Step 1.5/6] Estimating sign-in log volume..." -ForegroundColor Green
 
 $estimatedVolume = 0
-$scopeLabel = ""
 try {
     # Probe: fetch a small sample to estimate total volume
     $probeFilter = "resourceDisplayName eq 'Microsoft Graph' and createdDateTime ge $StartDate"
     $probeParams = @{ Filter = $probeFilter; Top = 1; Select = @("createdDateTime") }
-    $probeResult = Get-MgAuditLogSignIn @probeParams -CountVariable probeCount -ConsistencyLevel "eventual" -ErrorAction SilentlyContinue
+    $null = Get-MgAuditLogSignIn @probeParams -CountVariable probeCount -ConsistencyLevel "eventual" -ErrorAction SilentlyContinue
     if ($probeCount -and $probeCount -gt 0) {
         $estimatedVolume = $probeCount
     }
 }
 catch {
-    # $count header not supported in all tenants; fall back to sample-based estimate
+    Write-Verbose "Count header not available: $($_.Exception.Message)"
 }
 
 # If $count wasn't available, estimate from a timed sample
