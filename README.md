@@ -1,14 +1,27 @@
 # Analyze-GraphThrottling
 
-A PowerShell diagnostic script that analyzes Microsoft Graph API usage in a tenant to identify the root cause of HTTP 429 (Too Many Requests) throttling.
+PowerShell diagnostic scripts that identify the root cause of Microsoft Graph API HTTP 429 (Too Many Requests) throttling in a tenant. Includes a full analysis script (requires Entra ID P1/P2) and a lite version that works on any Entra ID tier.
 
 ## The Problem
 
 When a tenant exceeds Microsoft Graph API rate limits, all applications in that tenant start receiving `429 Too Many Requests` responses with `Retry-After` headers. This causes noticeable lag in end-user apps like Excel, Outlook, Teams, and any custom integrations that depend on Graph. The challenge is figuring out **which application or automation is consuming the quota** since throttling is tenant-wide but the source could be any registered app, service principal, or user-driven workflow.
 
-## What This Script Does
+## Which Script Should I Use?
 
-The script queries Entra ID sign-in logs via the Microsoft Graph PowerShell SDK and produces:
+| Script | License Required | Data Source | What It Tells You |
+|---|---|---|---|
+| **Analyze-GraphThrottling.ps1** | Entra ID P1/P2 | Sign-in logs | Actual API call volume, top callers, hourly patterns, failure rates |
+| **Analyze-GraphThrottling-Lite.ps1** | Entra ID Free | App registrations & permissions | Which apps *could* be throttling based on permissions, credentials, and risk scoring |
+
+- **Have P1/P2?** Use the full script. It gives you definitive answers.
+- **No P1/P2 (or unsure)?** Start with the lite script. It narrows the suspect list based on permission footprint, then upgrade to the full script if you can get P1/P2 access.
+- **Use both together:** Run the lite script first for a quick inventory, then the full script for confirmation with actual call volume data.
+
+---
+
+## Analyze-GraphThrottling.ps1 (Full)
+
+The full script queries Entra ID sign-in logs via the Microsoft Graph PowerShell SDK and produces:
 
 1. **Detailed data tables** (Analyses A-G) showing raw rankings
 2. **Automated findings** with cross-correlated insights and severity ratings (LOW/MEDIUM/HIGH/CRITICAL)
@@ -172,6 +185,87 @@ The following additions would improve the diagnostic value of this tool:
 4. **Conditional Access failure correlation** - The `ConditionalAccessStatus` field is captured but never analyzed. A CA-failure breakdown could reveal whether throttling is compounded by retry storms from blocked policies.
 
 5. **HTML report export** - A `-ExportHtml` switch producing a self-contained HTML report with formatted tables would be more shareable than the plain-text transcript.
+
+---
+
+## Analyze-GraphThrottling-Lite.ps1 (No P1/P2 Required)
+
+The lite script takes a fundamentally different approach. Instead of analyzing *who is calling* Graph (which requires sign-in logs and P1/P2), it inventories *who can call* Graph and scores each app by its throttling risk based on permissions, credentials, and configuration.
+
+### What the Lite Script Analyzes
+
+| Analysis | Description |
+|---|---|
+| **A. Risk Score Ranking** | Apps ranked by a composite risk score based on permission type, breadth, credential status, and audience |
+| **B. Daemon Apps** | Apps with application-level (not delegated) Graph permissions that can run unattended - the most common throttling source |
+| **C. Permission Breadth** | Apps ranked by total number of Graph scopes - more scopes means more diverse API usage |
+| **D. Multi-Tenant Apps** | Apps configured for external access that may receive calls from outside your organization |
+| **E. Credential Status** | Which apps have active vs. expired credentials - apps without credentials cannot be the source |
+| **F. Granted Permissions** | Service principals with admin-consented application permissions (confirmed active, not just requested) |
+
+### Risk Scoring
+
+Each app receives a composite risk score (0-100) based on:
+
+| Factor | Points | Rationale |
+|---|---|---|
+| Has application-level permissions | +30 | Daemon/automation apps are the primary throttling source |
+| 20+ Graph scopes | +25 | Broad API footprint suggests heavy, diverse usage |
+| 10-19 Graph scopes | +15 | Moderate API breadth |
+| 5-9 Graph scopes | +5 | Modest footprint |
+| Active credentials (secrets/certs) | +20 | Can authenticate and run right now |
+| High-volume permission patterns | +15 | Mail, Calendar, Files, Users, Groups, Sites, Directory scopes |
+| Multi-tenant audience | +10 | External callers may contribute to quota consumption |
+
+### Lite Script Requirements
+
+| Requirement | Details |
+|---|---|
+| **PowerShell** | 5.1+ or PowerShell 7+ |
+| **Module** | Microsoft Graph PowerShell SDK (`Install-Module Microsoft.Graph -Scope CurrentUser`) |
+| **License** | **Entra ID Free** (any tier - no P1/P2 needed) |
+| **Entra ID Role** | Global Reader (least-privilege); Application Administrator also works |
+| **Graph Permissions** | `Application.Read.All` and `Directory.Read.All` (delegated, consented at interactive login) |
+
+### Lite Script Usage
+
+```powershell
+# Default: inventory all apps with Graph permissions
+.\Analyze-GraphThrottling-Lite.ps1
+
+# Export the full app inventory to CSV
+.\Analyze-GraphThrottling-Lite.ps1 -ExportCsv
+
+# Include Microsoft first-party apps (excluded by default)
+.\Analyze-GraphThrottling-Lite.ps1 -IncludeFirstParty
+
+# Focus on a specific application
+.\Analyze-GraphThrottling-Lite.ps1 -AppIdFilter "d3590ed6-52b3-4102-aeff-aad2292ab01c"
+```
+
+### Lite Script Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `-ExportCsv` | switch | off | Export the full app inventory to a CSV file |
+| `-OutputFolder` | string | `.\GraphThrottlingAnalysis` | Directory for the report and CSV exports |
+| `-AppIdFilter` | string | none | Focus analysis on a specific application by its Entra ID App ID |
+| `-IncludeFirstParty` | switch | off | Include Microsoft first-party apps in Analysis F (excluded by default) |
+
+### Lite Script Output
+
+| File | Always Created | Description |
+|---|---|---|
+| `LiteThrottlingReport_<timestamp>.txt` | Yes | Structured findings report with risk scores, suspect list, and recommendations |
+| `LiteAnalysisReport_<timestamp>.txt` | Yes | Full console transcript |
+| `AppInventory_<timestamp>.csv` | With `-ExportCsv` | Complete app inventory with permissions, credentials, and risk scores |
+
+### Limitations of the Lite Script
+
+- **Cannot measure actual call volume.** It identifies apps that *could* cause throttling based on their permission footprint, not apps that *are* causing it.
+- **Risk scores are heuristic.** An app with a high risk score and broad permissions may be dormant, while a low-scored app with a single permission could be polling aggressively.
+- **First-party Microsoft apps are excluded by default.** Apps like Microsoft Teams, SharePoint, and Exchange Online are rarely customer-controllable. Use `-IncludeFirstParty` to see them.
+- **Owner data may be incomplete.** Not all app registrations have assigned owners in Entra ID.
 
 ## License
 
